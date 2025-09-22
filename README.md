@@ -2,7 +2,7 @@
 
 Automated incremental data pipeline for ComfyUI node mappings.
 
-## =� Quick Start
+## Quick Start
 
 ```bash
 # Run incremental update (recommended)
@@ -15,10 +15,10 @@ python src/update_registry.py --data-dir data --force-full
 python src/validate_data.py --data-dir data
 ```
 
-## =� Data Flow
+## Data Flow
 
 ```
-ComfyUI Registry API � Registry Cache � Node Mappings � Augmented with Manager Data
+ComfyUI Registry API -> Registry Cache -> Node Mappings -> Augmented with Manager Data
 ```
 
 1. **Cache Building**: Incremental fetch from ComfyUI registry
@@ -26,23 +26,23 @@ ComfyUI Registry API � Registry Cache � Node Mappings � Augmented with Man
 3. **Manager Integration**: Add community extensions from ComfyUI-Manager
 4. **Validation**: Ensure data integrity and consistency
 
-## = Automated Updates
+## Automated Updates
 
 GitHub Actions runs daily at 2 AM UTC:
--  Incremental updates (preserves all existing data)
--  Automatic validation and error handling
--  Atomic commits with detailed summaries
+- Incremental updates (preserves all existing data)
+- Automatic validation and error handling
+- Atomic commits with detailed summaries
 
-Trigger manual update: **Actions** � **Update Registry Data** � **Run workflow**
+Trigger manual update: **Actions** -> **Update Registry Data** -> **Run workflow**
 
-## =� Output Files
+## Output Files
 
 - `data/full_registry_cache.json` - Complete registry cache (~30MB)
 - `data/node_mappings.json` - Node signatures and package mappings (~10MB)
 
 **Note**: ComfyUI Manager data is GPL-3 licensed and used temporarily during generation only. It's automatically cleaned up to prevent license contamination.
 
-## =� Scripts
+## Scripts
 
 | Script | Purpose |
 |--------|---------|
@@ -53,7 +53,7 @@ Trigger manual update: **Actions** � **Update Registry Data** � **Run workfl
 | `fetch_manager_data.py` | Download Manager extension map |
 | `validate_data.py` | Verify data integrity |
 
-## <� Key Features
+## Key Features
 
 - **True Incremental**: Never removes data, only adds new entries
 - **Timestamp Tracking**: `first_seen` and `last_checked` for audit trails
@@ -61,7 +61,7 @@ Trigger manual update: **Actions** � **Update Registry Data** � **Run workfl
 - **Conflict Resolution**: Multiple sources handled gracefully
 - **Atomic Operations**: All writes are atomic to prevent corruption
 
-## = Development
+## Development
 
 ```bash
 # Test incremental update with limited data
@@ -75,7 +75,7 @@ python src/validate_data.py --cache test_cache.json --mappings test_mappings.jso
 python src/fetch_manager_data.py --output data/extension-node-map.json
 ```
 
-## =� Monitoring
+## Monitoring
 
 The pipeline tracks:
 - Package count and growth

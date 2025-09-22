@@ -51,6 +51,9 @@ data/.temp_extension-node-map.json
 # Build state files
 data/.update_state.json
 
+# Large cache file (stored in releases instead)
+data/full_registry_cache.json
+
 # Test files
 test_*.json
 *_test.json

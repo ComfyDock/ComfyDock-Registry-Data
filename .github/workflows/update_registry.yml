@@ -50,6 +50,26 @@ jobs:
       - name: Create data directory
         run: mkdir -p data
 
+      - name: Download previous cache from releases
+        run: |
+          # Try to download the latest cache from releases
+          echo "📥 Attempting to download previous cache from releases..."
+
+          latest_release=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+
+          if [ -n "$latest_release" ]; then
+            echo "Found release: $latest_release"
+            gh release download "$latest_release" \
+              --pattern "full_registry_cache.json" \
+              --dir data \
+              --clobber 2>/dev/null || echo "No cache file in release"
+          else
+            echo "No previous releases found"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
+
       - name: Check existing data
         id: check_data
         run: |
@@ -71,7 +91,7 @@ jobs:
 
       - name: Run incremental registry update
         env:
-          FORCE_REBUILD: ${{ github.event.inputs.force_full_rebuild }}
+          FORCE_REBUILD: false
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           cd src
@@ -98,6 +118,32 @@ jobs:
           stats = mappings.get('stats', {})
           print(f'✅ Mappings valid: {stats.get(\"packages\", 0)} packages, {stats.get(\"signatures\", 0)} signatures')
           "
+
+      - name: Upload cache to GitHub Release
+        if: steps.check_data.outputs.cache_exists == 'true'
+        run: |
+          # Create release tag based on date
+          release_tag="cache-$(date -u '+%Y%m%d-%H%M%S')"
+          release_title="Registry Cache $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          echo "📦 Creating release: $release_tag"
+
+          # Create release and upload cache file
+          gh release create "$release_tag" \
+            --title "$release_title" \
+            --notes "Automated registry cache update" \
+            data/full_registry_cache.json \
+            --latest
+
+          # Clean up old releases (keep last 7)
+          echo "🧹 Cleaning up old releases..."
+          gh release list --limit 100 --json tagName,createdAt \
+            | jq -r '.[] | select(.tagName | startswith("cache-")) | .tagName' \
+            | tail -n +8 \
+            | xargs -I {} gh release delete {} --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
 
       - name: Generate update summary
         id: summary
@@ -133,13 +179,14 @@ jobs:
           find data/ -name "*extension-node-map*" -delete 2>/dev/null || true
           find data/ -name ".temp_*" -delete 2>/dev/null || true
 
-          if git diff --quiet HEAD -- data/; then
+          # Only check for changes in node_mappings.json
+          if git diff --quiet HEAD -- data/node_mappings.json; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "No changes detected in data files"
+            echo "No changes detected in node_mappings.json"
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected in data files"
-            git diff --stat HEAD -- data/
+            echo "Changes detected in node_mappings.json"
+            git diff --stat HEAD -- data/node_mappings.json
           fi
 
       - name: Commit and push changes
@@ -147,14 +194,16 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            🤖 Update registry data
+            🤖 Update node mappings
 
             📦 ${{ steps.summary.outputs.packages }} packages
             🔗 ${{ steps.summary.outputs.signatures }} node signatures
             ⏰ Updated at $(date -u '+%Y-%m-%d %H:%M UTC')
 
+            Full cache available in releases
+
             🤖 Generated with Claude Code
-          file_pattern: 'data/*.json'
+          file_pattern: 'data/node_mappings.json'
           commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
           commit_user_name: 'github-actions[bot]'
           commit_user_email: 'github-actions[bot]@users.noreply.github.com>'

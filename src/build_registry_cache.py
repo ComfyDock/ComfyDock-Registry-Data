@@ -9,10 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from comfydock_core.logging.logging_config import get_logger, setup_logging
 from registry_client import RegistryClient
 
-logger = get_logger(__name__)
+from logging import getLogger
+
+logger = getLogger(__name__)
+
 
 
 class RegistryCacheBuilder:
@@ -143,24 +145,24 @@ class RegistryCacheBuilder:
                             for node in nodes:
                                 node_id = node["id"]
                                 if node_id not in self.nodes_data:
-                                    # New node - initialize with basic info
+                                    # New node - initialize with basic info and timestamps
                                     self.nodes_data[node_id] = node
                                     self.nodes_data[node_id]["basic_cached"] = True
                                     self.nodes_data[node_id]["versions_cached"] = False
                                     self.nodes_data[node_id]["metadata_count"] = 0
+                                    self.nodes_data[node_id]["first_seen"] = datetime.now().isoformat()
+                                    self.nodes_data[node_id]["last_checked"] = datetime.now().isoformat()
                                 else:
                                     # Update existing node with latest basic info
                                     existing = self.nodes_data[node_id]
                                     existing.update({k: v for k, v in node.items()
                                                    if k not in ['versions_list', 'basic_cached',
-                                                               'versions_cached', 'metadata_count']})
+                                                               'versions_cached', 'metadata_count', 'first_seen', 'last_checked']})
                                     existing["basic_cached"] = True
+                                    existing["last_checked"] = datetime.now().isoformat()
 
                             all_nodes.extend(nodes)
                             logger.info(f"Page {page}: Cached {len(nodes)} nodes")
-
-                            # Save checkpoint after each page
-                            self._save_cache(output_file)
 
                         if total_pages is None:
                             total_pages = data.get("totalPages", 1)
@@ -188,7 +190,7 @@ class RegistryCacheBuilder:
                 logger.error(f"Giving up on page {page}, continuing with next page")
                 # Continue to next page instead of breaking entirely
 
-            if page_success and page >= total_pages:
+            if page_success and total_pages and page >= total_pages:
                 break
 
             page += 1
@@ -204,7 +206,27 @@ class RegistryCacheBuilder:
         logger.info("=" * 60)
 
         # Process ALL nodes to check for new versions (incremental updates)
-        nodes_to_process = list(self.nodes_data.items())
+        # Optimization: Skip nodes checked within the last hour
+        all_nodes = list(self.nodes_data.items())
+        nodes_to_process = []
+        skipped_recent = 0
+
+        for node_id, node in all_nodes:
+            last_checked = node.get("last_checked")
+            if last_checked:
+                try:
+                    last_checked_dt = datetime.fromisoformat(last_checked)
+                    hours_since_check = (datetime.now() - last_checked_dt).total_seconds() / 3600
+                    if hours_since_check < 1.0:  # Skip if checked within last hour
+                        skipped_recent += 1
+                        continue
+                except Exception:
+                    pass  # If timestamp parsing fails, process the node
+
+            nodes_to_process.append((node_id, node))
+
+        if skipped_recent > 0:
+            logger.info(f"Optimization: Skipped {skipped_recent} recently checked nodes")
 
         if not nodes_to_process:
             logger.info("No nodes to process")
@@ -222,7 +244,7 @@ class RegistryCacheBuilder:
 
             # Process batch concurrently
             tasks = []
-            for node_id, node in batch:
+            for node_id, _ in batch:
                 task = asyncio.create_task(
                     self._fetch_node_versions_incremental(client, node_id)
                 )
@@ -250,17 +272,22 @@ class RegistryCacheBuilder:
         if self.max_versions <= 0:
             logger.info("No metadata limit specified, fetching all")
 
-        # Get nodes that need metadata
+        # Get nodes that need metadata for their LATEST versions
         nodes_needing_metadata = []
         for node_id, node in self.nodes_data.items():
-            if not node.get("versions_list"):
+            versions_list = node.get("versions_list", [])
+            if not versions_list:
                 continue
 
-            current_metadata_count = node.get("metadata_count", 0)
-            target = self.max_versions if self.max_versions > 0 else len(node["versions_list"])
+            # Get the top N versions (already sorted newest first)
+            max_to_check = self.max_versions if self.max_versions > 0 else len(versions_list)
+            top_versions = versions_list[:max_to_check]
 
-            if current_metadata_count < target:
-                nodes_needing_metadata.append((node_id, node, target - current_metadata_count))
+            # Count how many of the top N are missing metadata
+            missing_metadata_count = sum(1 for v in top_versions if not v.get("metadata_cached", False))
+
+            if missing_metadata_count > 0:
+                nodes_needing_metadata.append((node_id, node, missing_metadata_count))
 
         if not nodes_needing_metadata:
             logger.info("All nodes have sufficient metadata cached")
@@ -278,9 +305,9 @@ class RegistryCacheBuilder:
 
             # Process batch concurrently
             tasks = []
-            for node_id, node, versions_needed in batch:
+            for node_id, node, _ in batch:  # versions_needed no longer used
                 task = asyncio.create_task(
-                    self._fetch_node_metadata(client, node_id, versions_needed)
+                    self._fetch_node_metadata(client, node_id)
                 )
                 tasks.append(task)
 
@@ -372,6 +399,7 @@ class RegistryCacheBuilder:
                     await asyncio.sleep(0.02)  # Rate limit only when making API calls
 
                 version_info["metadata_cached"] = False
+                version_info["first_seen"] = datetime.now().isoformat()
                 new_enriched_versions.append(version_info)
                 self.versions_processed += 1
 
@@ -386,6 +414,7 @@ class RegistryCacheBuilder:
 
             self.nodes_data[node_id]["versions_list"] = all_versions
             self.nodes_data[node_id]["versions_cached"] = True
+            self.nodes_data[node_id]["last_checked"] = datetime.now().isoformat()
 
             logger.debug(f"Added {len(new_enriched_versions)} new versions to {node_id} (total: {len(all_versions)})")
 
@@ -393,8 +422,8 @@ class RegistryCacheBuilder:
             logger.error(f"Failed to fetch versions for {node_id}: {e}")
             self.failed_nodes.append(node_id)
 
-    async def _fetch_node_metadata(self, client: RegistryClient, node_id: str, versions_needed: int):
-        """Fetch metadata for node versions."""
+    async def _fetch_node_metadata(self, client: RegistryClient, node_id: str):
+        """Fetch metadata for the latest N versions of a node."""
         try:
             node = self.nodes_data[node_id]
             versions_list = node.get("versions_list", [])
@@ -402,12 +431,13 @@ class RegistryCacheBuilder:
             if not versions_list:
                 return
 
+            # Only process the top N versions (already sorted newest first)
+            max_to_process = self.max_versions if self.max_versions > 0 else len(versions_list)
+            top_versions = versions_list[:max_to_process]
+
             metadata_fetched = 0
 
-            for version_info in versions_list:
-                if metadata_fetched >= versions_needed:
-                    break
-
+            for version_info in top_versions:
                 # Skip if already has metadata
                 if version_info.get("metadata_cached", False):
                     continue
@@ -442,13 +472,24 @@ class RegistryCacheBuilder:
             self.failed_nodes.append(node_id)
 
     def _load_cache(self, cache_file: Path):
-        """Load existing cache data."""
+        """Load existing cache data with timestamp preservation."""
         with open(cache_file, 'r') as f:
             cache_data = json.load(f)
 
         # Convert nodes list to dict for efficient lookups
         nodes = cache_data.get("nodes", [])
         for node in nodes:
+            # Ensure timestamps exist for existing data
+            if "first_seen" not in node:
+                node["first_seen"] = cache_data.get("cached_at", datetime.now().isoformat())
+            if "last_checked" not in node:
+                node["last_checked"] = cache_data.get("cached_at", datetime.now().isoformat())
+
+            # Ensure version timestamps exist
+            for version in node.get("versions_list", []):
+                if "first_seen" not in version:
+                    version["first_seen"] = node.get("first_seen", datetime.now().isoformat())
+
             self.nodes_data[node["id"]] = node
 
     def _save_cache(self, output_file: Path):
@@ -633,7 +674,7 @@ Progressive Enhancement Examples:
     )
 
     args = parser.parse_args()
-    setup_logging(level=args.log_level, simple_format=True)
+    # setup_logging(level=args.log_level, simple_format=True)
 
     builder = RegistryCacheBuilder(
         concurrency=args.concurrency,

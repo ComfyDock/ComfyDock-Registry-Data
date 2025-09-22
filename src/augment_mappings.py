@@ -60,10 +60,10 @@ from pathlib import Path
 from typing import Dict, List, Set
 from urllib.parse import urlparse, urlunparse
 
-from comfydock_core.logging.logging_config import get_logger
 from comfydock_core.utils.input_signature import create_node_key
+from logging import getLogger
 
-logger = get_logger(__name__)
+logger = getLogger(__name__)
 
 
 def normalize_github_url(url: str) -> str:
@@ -106,10 +106,20 @@ class MappingsAugmenter:
             self.mappings_data = json.load(f)
         logger.info(f"Loaded {len(self.mappings_data['mappings'])} mappings, {len(self.mappings_data['packages'])} packages")
 
-        # Load manager extension map
+        # Load manager extension map (handle both wrapped and raw formats)
         with open(self.manager_file, 'r') as f:
-            self.manager_data = json.load(f)
-        logger.info(f"Loaded {len(self.manager_data)} extensions from Manager")
+            manager_raw = json.load(f)
+
+        # Check if data is wrapped (new format) or raw (old format)
+        if isinstance(manager_raw, dict) and "extensions" in manager_raw:
+            # New wrapped format from fetch_manager_data.py
+            self.manager_data = manager_raw["extensions"]
+            fetched_at = manager_raw.get("fetched_at", "unknown")
+            logger.info(f"Loaded {len(self.manager_data)} extensions from Manager (fetched: {fetched_at})")
+        else:
+            # Old raw format
+            self.manager_data = manager_raw
+            logger.info(f"Loaded {len(self.manager_data)} extensions from Manager (raw format)")
 
     def build_url_to_package_map(self) -> Dict[str, str]:
         """Build mapping from GitHub URLs to package IDs."""

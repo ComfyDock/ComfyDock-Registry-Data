@@ -1,0 +1,182 @@
+name: Update Registry Data
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:
+    inputs:
+      force_full_rebuild:
+        description: 'Force full rebuild instead of incremental'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  update-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hour timeout for safety
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install aiohttp asyncio logging
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Check existing data
+        id: check_data
+        run: |
+          if [ -f "data/full_registry_cache.json" ]; then
+            echo "cache_exists=true" >> $GITHUB_OUTPUT
+            cache_size=$(du -h data/full_registry_cache.json | cut -f1)
+            echo "cache_size=$cache_size" >> $GITHUB_OUTPUT
+          else
+            echo "cache_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [ -f "data/node_mappings.json" ]; then
+            echo "mappings_exists=true" >> $GITHUB_OUTPUT
+            mappings_size=$(du -h data/node_mappings.json | cut -f1)
+            echo "mappings_size=$mappings_size" >> $GITHUB_OUTPUT
+          else
+            echo "mappings_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run incremental registry update
+        env:
+          FORCE_REBUILD: ${{ github.event.inputs.force_full_rebuild }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          cd src
+          if [ "$FORCE_REBUILD" = "true" ]; then
+            echo "🔄 Running FULL rebuild (forced)"
+            python update_registry.py --data-dir ../data --force-full
+          else
+            echo "⚡ Running INCREMENTAL update"
+            python update_registry.py --data-dir ../data --incremental
+          fi
+
+      - name: Validate data integrity
+        run: |
+          cd src
+          echo "🔍 Validating cache data..."
+          python -c "
+          import json
+          with open('../data/full_registry_cache.json') as f:
+              cache = json.load(f)
+          print(f'✅ Cache valid: {cache.get(\"node_count\", 0)} nodes, {cache.get(\"versions_processed\", 0)} versions')
+
+          with open('../data/node_mappings.json') as f:
+              mappings = json.load(f)
+          stats = mappings.get('stats', {})
+          print(f'✅ Mappings valid: {stats.get(\"packages\", 0)} packages, {stats.get(\"signatures\", 0)} signatures')
+          "
+
+      - name: Generate update summary
+        id: summary
+        run: |
+          cd data
+
+          # Get file sizes
+          cache_size=$(du -h full_registry_cache.json | cut -f1)
+          mappings_size=$(du -h node_mappings.json | cut -f1)
+
+          # Extract stats from files
+          packages=$(jq -r '.node_count // 0' full_registry_cache.json)
+          versions=$(jq -r '.versions_processed // 0' full_registry_cache.json)
+          signatures=$(jq -r '.stats.signatures // 0' node_mappings.json)
+
+          echo "## 📊 Registry Update Summary" >> ../update_summary.md
+          echo "" >> ../update_summary.md
+          echo "**Data Files:**" >> ../update_summary.md
+          echo "- Cache: $cache_size ($packages packages, $versions versions)" >> ../update_summary.md
+          echo "- Mappings: $mappings_size ($signatures signatures)" >> ../update_summary.md
+          echo "" >> ../update_summary.md
+          echo "**Update Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> ../update_summary.md
+          echo "**Trigger:** ${{ github.event_name }}" >> ../update_summary.md
+
+          # Set outputs for commit message
+          echo "packages=$packages" >> $GITHUB_OUTPUT
+          echo "signatures=$signatures" >> $GITHUB_OUTPUT
+
+      - name: Check for changes
+        id: changes
+        run: |
+          # Ensure no manager files are present before checking changes
+          find data/ -name "*extension-node-map*" -delete 2>/dev/null || true
+          find data/ -name ".temp_*" -delete 2>/dev/null || true
+
+          if git diff --quiet HEAD -- data/; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in data files"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in data files"
+            git diff --stat HEAD -- data/
+          fi
+
+      - name: Commit and push changes
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: |
+            🤖 Update registry data
+
+            📦 ${{ steps.summary.outputs.packages }} packages
+            🔗 ${{ steps.summary.outputs.signatures }} node signatures
+            ⏰ Updated at $(date -u '+%Y-%m-%d %H:%M UTC')
+
+            🤖 Generated with Claude Code
+          file_pattern: 'data/*.json'
+          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: 'github-actions[bot]@users.noreply.github.com>'
+
+      - name: Post summary comment (on workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('update_summary.md', 'utf8');
+
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: summary
+            });
+
+      - name: Handle failures
+        if: failure()
+        run: |
+          echo "❌ Registry update failed"
+          echo "Logs will be available in the Actions tab"
+          # Could add notification logic here (Slack, email, etc.)
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Clean up temporary files
+          find . -name "*extension-node-map*" -delete 2>/dev/null || true
+          find . -name ".temp_*" -delete 2>/dev/null || true
+
+          # Clean up other temporary files
+          find . -name "*.tmp" -delete 2>/dev/null || true
+          find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+          echo "🧹 Cleaned up all temporary and GPL-3 licensed files"

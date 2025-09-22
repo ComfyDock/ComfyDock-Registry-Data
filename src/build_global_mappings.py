@@ -27,10 +27,19 @@ class GlobalMappingsBuilder:
         self.total_nodes = 0
         self.total_signatures = 0
 
-    def build_mappings(self, registry_cache: Path) -> Dict:
-        """Build mappings from cached registry data."""
+    def build_mappings(self, registry_cache: Path, existing_mappings: Path = None) -> Dict:
+        """Build mappings from cached registry data with optional incremental support."""
         start_time = time.time()
         logger.info("Starting mappings build from cache")
+
+        # Load existing mappings if provided (for incremental updates)
+        if existing_mappings and existing_mappings.exists():
+            logger.info(f"Loading existing mappings from {existing_mappings}")
+            with open(existing_mappings, 'r') as f:
+                existing_data = json.load(f)
+                self.mappings = existing_data.get("mappings", {})
+                self.packages = existing_data.get("packages", {})
+                logger.info(f"Loaded {len(self.mappings)} existing mappings, {len(self.packages)} packages")
 
         # Load registry cache
         if not registry_cache.exists():
@@ -46,7 +55,8 @@ class GlobalMappingsBuilder:
 
         logger.info(f"Loaded cache: {len(nodes)} nodes, {metadata_entries} metadata entries (cached at: {cached_at})")
 
-        # Process all nodes
+        # Process all nodes (rebuild approach for MVP - simple and reliable)
+        # In future versions, could optimize to only process nodes with recent last_checked
         for i, node in enumerate(nodes, 1):
             if i % 100 == 0:
                 logger.info(f"Processing node {i}/{len(nodes)}...")
@@ -93,6 +103,7 @@ class GlobalMappingsBuilder:
                 "rating": node.get("rating", 0),
                 "license": node.get("license", ""),
                 "category": node.get("category", ""),
+                "icon": node.get("icon", ""),
                 "tags": node.get("tags", []),
                 "status": node.get("status", ""),
                 "created_at": node.get("created_at", ""),
@@ -239,6 +250,12 @@ Examples:
         help="Output mappings file"
     )
     parser.add_argument(
+        "--existing",
+        "-e",
+        type=Path,
+        help="Existing mappings file to merge with (for incremental updates)"
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -250,7 +267,7 @@ Examples:
 
     # Build mappings
     builder = GlobalMappingsBuilder()
-    data = builder.build_mappings(registry_cache=args.cache)
+    data = builder.build_mappings(registry_cache=args.cache, existing_mappings=args.existing)
 
     if not data:
         logger.error("Failed to build mappings")

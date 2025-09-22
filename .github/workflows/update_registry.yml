@@ -1,20 +1,29 @@
 name: Update Registry Data
 
+# Disabled until comfydock-core is available and monorepo integration is ready
 on:
-  schedule:
-    - cron: '0 2 * * *'  # 2 AM UTC daily
   workflow_dispatch:
     inputs:
-      force_full_rebuild:
-        description: 'Force full rebuild instead of incremental'
+      enabled:
+        description: 'This workflow is currently disabled'
         required: false
         type: boolean
         default: false
+#  schedule:
+#    - cron: '0 2 * * *'  # 2 AM UTC daily
+#  workflow_dispatch:
+#    inputs:
+#      force_full_rebuild:
+#        description: 'Force full rebuild instead of incremental'
+#        required: false
+#        type: boolean
+#        default: false
 
 jobs:
   update-registry:
     runs-on: ubuntu-latest
     timeout-minutes: 120  # 2 hour timeout for safety
+    if: ${{ github.event.inputs.enabled == 'true' }}
 
     steps:
       - name: Checkout repository
@@ -24,15 +33,19 @@ jobs:
           fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install aiohttp asyncio logging
+          uv sync --frozen
 
       - name: Create data directory
         run: mkdir -p data
@@ -64,17 +77,17 @@ jobs:
           cd src
           if [ "$FORCE_REBUILD" = "true" ]; then
             echo "🔄 Running FULL rebuild (forced)"
-            python update_registry.py --data-dir ../data --force-full
+            uv run python update_registry.py --data-dir ../data --force-full
           else
             echo "⚡ Running INCREMENTAL update"
-            python update_registry.py --data-dir ../data --incremental
+            uv run python update_registry.py --data-dir ../data --incremental
           fi
 
       - name: Validate data integrity
         run: |
           cd src
           echo "🔍 Validating cache data..."
-          python -c "
+          uv run python -c "
           import json
           with open('../data/full_registry_cache.json') as f:
               cache = json.load(f)

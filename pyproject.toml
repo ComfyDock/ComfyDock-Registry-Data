@@ -1,6 +1,6 @@
 [project]
 name = "comfydock-registry-data"
-version = "0.2.0"
+version = "0.2.1"
 description = "A repo to store and manage Comfy Registry cache data, as well as generate node_mappings.json for efficient node discovery."
 readme = "README.md"
 requires-python = ">=3.13"

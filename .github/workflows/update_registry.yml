@@ -23,6 +23,8 @@ jobs:
   update-registry:
     runs-on: ubuntu-latest
     timeout-minutes: 120  # 2 hour timeout for safety
+    permissions:
+      contents: write  # Needed for actions/checkout
     if: ${{ github.event.inputs.enabled == 'true' }}
 
     steps:

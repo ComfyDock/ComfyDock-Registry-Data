@@ -120,7 +120,6 @@ jobs:
           "
 
       - name: Upload cache to GitHub Release
-        if: steps.check_data.outputs.cache_exists == 'true'
         run: |
           # Create release tag based on date
           release_tag="cache-$(date -u '+%Y%m%d-%H%M%S')"

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class RegistryOrchestrator:
     """Orchestrates incremental registry data updates."""
 
-    def __init__(self, data_dir: Path, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 10):
+    def __init__(self, data_dir: Path, schema_config: Path = None, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 10):
         self.data_dir = data_dir
         self.cache_file = data_dir / "full_registry_cache.json"
         self.mappings_file = data_dir / "node_mappings.json"
@@ -36,6 +36,7 @@ class RegistryOrchestrator:
         self.concurrency = concurrency
         self.checkpoint_interval = checkpoint_interval
         self.max_versions = max_versions
+        self.schema_config = schema_config
 
         # Ensure data directory exists
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -185,7 +186,7 @@ class RegistryOrchestrator:
         augmenter = MappingsAugmenter(self.mappings_file, self.manager_file)
         augmenter.load_data()
         augmenter.augment_mappings()
-        augmenter.save_augmented_mappings(self.mappings_file)
+        augmenter.save_augmented_mappings(self.mappings_file, schema_config=self.schema_config)
 
         # Update stats
         self.stats["augmentation_completed_at"] = datetime.now().isoformat()
@@ -276,6 +277,12 @@ async def main():
         default=10,
         help="Max versions to fetch metadata for (default: 10)"
     )
+    parser.add_argument(
+        "--schema-config",
+        type=Path,
+        default=Path("config/output_schema.toml"),
+        help="Schema configuration file (default: config/output_schema.toml)"
+    )
 
     args = parser.parse_args()
 
@@ -288,6 +295,7 @@ async def main():
     # Run orchestrator
     orchestrator = RegistryOrchestrator(
         data_dir=args.data_dir,
+        schema_config=args.schema_config,
         concurrency=args.concurrency,
         checkpoint_interval=args.checkpoint_interval,
         max_versions=args.max_versions

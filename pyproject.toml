@@ -1,7 +1,7 @@
 [project]
 name = "comfydock-registry-data"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "A repo to store and manage Comfy Registry cache data, as well as generate node_mappings.json for efficient node discovery."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -11,3 +11,8 @@ dependencies = [
 
 [tool.uv.sources]
 comfydock-core = { path = "../comfydock/packages/core", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

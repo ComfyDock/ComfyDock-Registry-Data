@@ -1,0 +1,51 @@
+# Output Schema Configuration
+# Controls which fields appear in final node_mappings.json
+#
+# This minimal schema includes only fields actively used by the comfydock CLI.
+# Based on field usage audit showing ~70% of fields are never referenced.
+#
+# Set to true to include field in output, false to exclude.
+
+[packages]
+# Core fields (REQUIRED - used by CLI)
+display_name = true   # Used in CLI for package selection
+description = true    # Used in CLI for package info
+repository = true     # Critical - used for git clone operations
+github_stars = true   # Used as popularity tiebreaker in search scoring
+versions = true       # Critical - version selection and metadata
+
+# Source tracking
+source = true         # Distinguishes registry vs manager-sourced packages
+
+# Unused metadata (EXCLUDED - 0 references in CLI)
+author = false        # Loaded but never used
+downloads = false     # Loaded but never used (rank used instead)
+rating = false        # Loaded but never used
+license = false       # Loaded but never used
+category = false      # Loaded but never used
+icon = false          # Loaded but never used
+tags = false          # Loaded but never used
+status = false        # Loaded but never used
+created_at = false    # Loaded but never used
+
+[versions]
+# Core fields (REQUIRED - used by CLI)
+version = true        # Version selection
+download_url = true   # Critical - used for downloading packages
+deprecated = true     # Used to skip deprecated versions
+dependencies = false  # Used to show dependency count in CLI
+
+# Unused metadata (EXCLUDED - 0 references in CLI)
+changelog = false             # Loaded but never used
+release_date = false          # Loaded but never used
+status = false                # Loaded but never used
+supported_accelerators = false # Loaded but never used
+supported_comfyui_version = false # Loaded but never used
+supported_os = false          # Loaded but never used
+
+[mappings]
+# All mapping fields are required by CLI
+package_id = true     # Critical - primary mapping key
+versions = true       # Version constraints
+rank = true           # Critical - used for auto-selecting best package
+source = true         # Loaded but not used in resolution (kept for debugging)

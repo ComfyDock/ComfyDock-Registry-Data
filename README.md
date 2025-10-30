@@ -1,6 +1,6 @@
-# ComfyDock Registry Data Pipeline
+# ComfyDock Registry Data
 
-Automated incremental data pipeline for ComfyUI node mappings.
+Automated data pipeline for ComfyUI node mappings and package discovery. Provides comprehensive, continuously updated registry data for efficient node resolution and package management.
 
 ## Quick Start
 
@@ -15,73 +15,111 @@ python src/update_registry.py --data-dir data --force-full
 python src/validate_data.py --data-dir data
 ```
 
-## Data Flow
+## Data Pipeline
 
 ```
-ComfyUI Registry API -> Registry Cache -> Node Mappings -> Augmented with Manager Data
+ComfyUI Registry API → Registry Cache → Node Mappings → Community Extensions
 ```
 
-1. **Cache Building**: Incremental fetch from ComfyUI registry
-2. **Mapping Generation**: Create node signatures from cache data
-3. **Manager Integration**: Add community extensions from ComfyUI-Manager
-4. **Validation**: Ensure data integrity and consistency
-
-## Automated Updates
-
-GitHub Actions runs daily at 2 AM UTC:
-- Incremental updates (preserves all existing data)
-- Automatic validation and error handling
-- Atomic commits with detailed summaries
-
-Trigger manual update: **Actions** -> **Update Registry Data** -> **Run workflow**
+The pipeline operates in phases:
+1. **Cache Building** - Incremental fetch from ComfyUI registry
+2. **Mapping Generation** - Create node signatures with input types
+3. **Community Integration** - Augment with ecosystem extensions
+4. **Validation** - Ensure data integrity and consistency
 
 ## Output Files
 
-- `data/full_registry_cache.json` - Complete registry cache (~30MB)
-- `data/node_mappings.json` - Node signatures and package mappings (~10MB)
+### `data/node_mappings.json` (~10MB)
+Primary output file containing node signatures and package mappings.
 
-**Note**: ComfyUI Manager data is GPL-3 licensed and used temporarily during generation only. It's automatically cleaned up to prevent license contamination.
+**Structure:**
+```json
+{
+  "version": "2024.10.28",
+  "generated_at": "2024-10-28T12:21:00",
+  "stats": {
+    "packages": 1234,
+    "signatures": 5678,
+    "total_nodes": 9012
+  },
+  "mappings": {
+    "node_name|input_signature": [
+      {
+        "package_id": "author/package-name",
+        "versions": ["1.0.0", "0.9.0"],
+        "rank": 1
+      }
+    ]
+  },
+  "packages": {
+    "author/package-name": {
+      "display_name": "Package Name",
+      "repository": "https://github.com/author/package-name",
+      "downloads": 1000,
+      "github_stars": 50,
+      "versions": { ... }
+    }
+  }
+}
+```
 
-## Scripts
+**Package Ranking:** Packages are ranked by popularity score:
+- Downloads (weighted 0.1x)
+- GitHub stars (weighted 2x)
+- Recency multiplier (0.5-1.0 based on last release age)
 
-| Script | Purpose |
-|--------|---------|
-| `update_registry.py` | **Main orchestrator** - runs complete pipeline |
-| `build_registry_cache.py` | Fetch and cache registry data incrementally |
-| `build_global_mappings.py` | Generate node mappings from cache |
-| `augment_mappings.py` | Add ComfyUI Manager community data |
-| `fetch_manager_data.py` | Download Manager extension map |
-| `validate_data.py` | Verify data integrity |
+### `data/full_registry_cache.json` (~65MB)
+Complete registry cache stored in GitHub Releases (not committed to git).
 
 ## Key Features
 
-- **True Incremental**: Never removes data, only adds new entries
-- **Timestamp Tracking**: `first_seen` and `last_checked` for audit trails
-- **Append-Only**: Deprecated versions marked but preserved
-- **Conflict Resolution**: Multiple sources handled gracefully
-- **Atomic Operations**: All writes are atomic to prevent corruption
+- **Incremental Updates** - Never removes data, only adds new entries
+- **Timestamp Tracking** - Audit trails with `first_seen` and `last_checked`
+- **Version Preservation** - Deprecated versions marked but retained
+- **Multi-Source Resolution** - Handles packages from multiple sources
+- **Atomic Operations** - All writes are atomic to prevent corruption
+- **Schema Filtering** - Configurable output schema via `config/output_schema.toml`
+
+## Automated Updates
+
+GitHub Actions workflow (currently disabled pending dependency availability):
+- Daily incremental updates at 2 AM UTC
+- Automatic validation and error handling
+- Cache stored in releases, mappings committed to git
+- Detailed metrics in commit messages
 
 ## Development
 
 ```bash
-# Test incremental update with limited data
+# Install dependencies
+uv sync
+
+# Test with limited data
 python src/build_registry_cache.py --pages 5 --output test_cache.json
 python src/build_global_mappings.py --cache test_cache.json --output test_mappings.json
 
-# Validate specific files
+# Validate output
 python src/validate_data.py --cache test_cache.json --mappings test_mappings.json
-
-# Fetch latest Manager data
-python src/fetch_manager_data.py --output data/extension-node-map.json
 ```
 
-## Monitoring
+## Scripts Reference
 
-The pipeline tracks:
-- Package count and growth
-- Version additions per update
-- Node signature coverage
-- Data file sizes and build times
-- Synthetic package creation from Manager
+| Script | Purpose |
+|--------|---------|
+| `update_registry.py` | Main orchestrator for complete pipeline |
+| `build_registry_cache.py` | Fetch and cache registry data incrementally |
+| `build_global_mappings.py` | Generate node mappings from cache |
+| `augment_mappings.py` | Add community extensions |
+| `validate_data.py` | Verify data integrity |
 
-All metrics are captured in commit messages and GitHub Actions logs.
+## Requirements
+
+- Python 3.13+
+- Dependencies: `aiohttp`, `comfydock-core`
+- UV package manager (recommended)
+
+## License
+
+This project is licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+
+**Commercial Licensing:** Businesses requiring integration into proprietary systems can request a more permissive license. Contact the project maintainers for commercial licensing options.

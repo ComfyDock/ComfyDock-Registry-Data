@@ -98,10 +98,16 @@ jobs:
           cd src
           if [ "$FORCE_REBUILD" = "true" ]; then
             echo "🔄 Running FULL rebuild (forced)"
-            uv run --no-sources python update_registry.py --data-dir ../data --force-full
+            uv run --no-sources python update_registry.py \
+              --data-dir ../data \
+              --schema-config ../config/output_schema.toml \
+              --force-full
           else
             echo "⚡ Running INCREMENTAL update"
-            uv run --no-sources python update_registry.py --data-dir ../data --incremental
+            uv run --no-sources python update_registry.py \
+              --data-dir ../data \
+              --schema-config ../config/output_schema.toml \
+              --incremental
           fi
 
       - name: Validate data integrity

@@ -46,7 +46,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --no-sources
+          uv sync --no-sources
 
       - name: Create data directory
         run: mkdir -p data

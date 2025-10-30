@@ -98,17 +98,17 @@ jobs:
           cd src
           if [ "$FORCE_REBUILD" = "true" ]; then
             echo "🔄 Running FULL rebuild (forced)"
-            uv run python update_registry.py --data-dir ../data --force-full
+            uv run --no-sources python update_registry.py --data-dir ../data --force-full
           else
             echo "⚡ Running INCREMENTAL update"
-            uv run python update_registry.py --data-dir ../data --incremental
+            uv run --no-sources python update_registry.py --data-dir ../data --incremental
           fi
 
       - name: Validate data integrity
         run: |
           cd src
           echo "🔍 Validating cache data..."
-          uv run python -c "
+          uv run --no-sources python -c "
           import json
           with open('../data/full_registry_cache.json') as f:
               cache = json.load(f)

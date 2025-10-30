@@ -1,12 +1,12 @@
 [project]
 name = "comfydock-registry-data"
-version = "0.2.1"
+version = "1.0.0"
 description = "A repo to store and manage Comfy Registry cache data, as well as generate node_mappings.json for efficient node discovery."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiohttp>=3.12.15",
-    "comfydock-core",
+    "comfydock-core>=1.0.0",
 ]
 
 [tool.uv.sources]

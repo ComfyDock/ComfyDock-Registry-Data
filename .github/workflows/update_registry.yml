@@ -1,23 +1,22 @@
 name: Update Registry Data
 
-# Disabled until comfydock-core is available and monorepo integration is ready
+# Note: Workflow uses --no-sources to pull comfydock-core from PyPI instead of local monorepo path
+# Enable this workflow once comfydock-core >=1.0.0 is published to PyPI
 on:
   workflow_dispatch:
     inputs:
       enabled:
-        description: 'This workflow is currently disabled'
+        description: 'Enable this workflow (set to true)'
+        required: false
+        type: boolean
+        default: false
+      force_full_rebuild:
+        description: 'Force full rebuild instead of incremental'
         required: false
         type: boolean
         default: false
 #  schedule:
-#    - cron: '0 2 * * *'  # 2 AM UTC daily
-#  workflow_dispatch:
-#    inputs:
-#      force_full_rebuild:
-#        description: 'Force full rebuild instead of incremental'
-#        required: false
-#        type: boolean
-#        default: false
+#    - cron: '0 2 * * *'  # 2 AM UTC daily - uncomment when ready for automated runs
 
 jobs:
   update-registry:
@@ -47,7 +46,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen
+          uv sync --frozen --no-sources
 
       - name: Create data directory
         run: mkdir -p data
@@ -93,7 +92,7 @@ jobs:
 
       - name: Run incremental registry update
         env:
-          FORCE_REBUILD: false
+          FORCE_REBUILD: ${{ github.event.inputs.force_full_rebuild || 'false' }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           cd src

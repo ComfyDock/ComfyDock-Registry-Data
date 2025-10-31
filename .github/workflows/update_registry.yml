@@ -15,8 +15,8 @@ on:
         required: false
         type: boolean
         default: false
-#  schedule:
-#    - cron: '0 2 * * *'  # 2 AM UTC daily - uncomment when ready for automated runs
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
 
 jobs:
   update-registry:
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 120  # 2 hour timeout for safety
     permissions:
       contents: write  # Needed for actions/checkout
-    if: ${{ github.event.inputs.enabled == 'true' }}
+    if: ${{ github.event_name == 'schedule' || github.event.inputs.enabled == 'true' }}
 
     steps:
       - name: Checkout repository
@@ -247,4 +247,4 @@ jobs:
           find . -name "*.tmp" -delete 2>/dev/null || true
           find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-          echo "🧹 Cleaned up all temporary and GPL-3 licensed files"
+          echo "🧹 Cleaned up all temporary files"

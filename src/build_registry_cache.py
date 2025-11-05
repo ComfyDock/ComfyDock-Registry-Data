@@ -159,7 +159,7 @@ class RegistryCacheBuilder:
                                                    if k not in ['versions_list', 'basic_cached',
                                                                'versions_cached', 'metadata_count', 'first_seen', 'last_checked']})
                                     existing["basic_cached"] = True
-                                    existing["last_checked"] = datetime.now().isoformat()
+                                    # Note: last_checked is intentionally NOT updated here to allow Phase 2 to process existing nodes
 
                             all_nodes.extend(nodes)
                             logger.info(f"Page {page}: Cached {len(nodes)} nodes")

@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120  # 2 hour timeout for safety
     permissions:
-      contents: write  # Needed for actions/checkout
+      contents: write  # Needed for: checkout, downloading/creating releases, and committing changes
     if: ${{ github.event_name == 'schedule' || github.event.inputs.enabled == 'true' }}
 
     steps:
@@ -53,23 +53,55 @@ jobs:
 
       - name: Download previous cache from releases
         run: |
-          # Try to download the latest cache from releases
+          # Download the latest cache from releases with explicit error handling
           echo "📥 Attempting to download previous cache from releases..."
 
-          latest_release=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          # Get releases with cache prefix, sorted by creation date (newest first)
+          echo "Checking available cache releases..."
+          gh release list --limit 5 --json tagName,createdAt,isLatest \
+            | jq -r '.[] | select(.tagName | startswith("cache-")) | "  - \(.tagName) (created: \(.createdAt), latest: \(.isLatest))"'
 
-          if [ -n "$latest_release" ]; then
-            echo "Found release: $latest_release"
-            gh release download "$latest_release" \
-              --pattern "full_registry_cache.json" \
-              --dir data \
-              --clobber 2>/dev/null || echo "No cache file in release"
+          # Get the latest release tag (explicitly marked with --latest flag)
+          latest_release=$(gh release list --limit 100 --json tagName,isLatest,createdAt \
+            | jq -r '[.[] | select(.tagName | startswith("cache-"))] | sort_by(.createdAt) | reverse | .[0].tagName')
+
+          if [ -z "$latest_release" ]; then
+            echo "⚠️  No previous releases found - will perform full rebuild"
+            exit 0
+          fi
+
+          echo "Found release: $latest_release"
+
+          # List assets in the release for debugging
+          echo "Release assets:"
+          gh release view "$latest_release" --json assets -q '.assets[].name'
+
+          # Download with explicit error handling (no error suppression!)
+          if gh release download "$latest_release" \
+            --pattern "full_registry_cache.json" \
+            --dir data \
+            --clobber; then
+
+            # Verify download succeeded
+            if [ -f "data/full_registry_cache.json" ]; then
+              file_size=$(du -h data/full_registry_cache.json | cut -f1)
+              echo "✅ Successfully downloaded cache: $file_size"
+
+              # Validate it's valid JSON with expected structure
+              node_count=$(jq -r '.node_count // 0' data/full_registry_cache.json)
+              cached_at=$(jq -r '.cached_at // "unknown"' data/full_registry_cache.json)
+              echo "   Cache contains: $node_count nodes (cached at: $cached_at)"
+            else
+              echo "❌ ERROR: Cache file not found after download"
+              exit 1
+            fi
           else
-            echo "No previous releases found"
+            echo "❌ ERROR: Failed to download cache from release $latest_release"
+            echo "This is a critical error - cache is required for incremental updates"
+            exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-        continue-on-error: true
 
       - name: Check existing data
         id: check_data

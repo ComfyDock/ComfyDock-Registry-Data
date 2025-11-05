@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class RegistryOrchestrator:
     """Orchestrates incremental registry data updates."""
 
-    def __init__(self, data_dir: Path, schema_config: Path = None, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 10):
+    def __init__(self, data_dir: Path, schema_config: Path = None, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 10, rate_limit_delay: float = 0.1, max_retries: int = 3):
         self.data_dir = data_dir
         self.cache_file = data_dir / "full_registry_cache.json"
         self.mappings_file = data_dir / "node_mappings.json"
@@ -36,6 +36,8 @@ class RegistryOrchestrator:
         self.concurrency = concurrency
         self.checkpoint_interval = checkpoint_interval
         self.max_versions = max_versions
+        self.rate_limit_delay = rate_limit_delay
+        self.max_retries = max_retries
         self.schema_config = schema_config
 
         # Ensure data directory exists
@@ -86,6 +88,8 @@ class RegistryOrchestrator:
             concurrency=self.concurrency,
             checkpoint_interval=self.checkpoint_interval,
             max_versions=self.max_versions,
+            rate_limit_delay=self.rate_limit_delay,
+            max_retries=self.max_retries,
             nodes_per_page=200
         )
 
@@ -278,6 +282,18 @@ async def main():
         help="Max versions to fetch metadata for (default: 10)"
     )
     parser.add_argument(
+        "--rate-limit-delay",
+        type=float,
+        default=0.1,
+        help="Delay in seconds between version requests to avoid rate limiting (default: 0.1)"
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Max retry attempts for rate-limited requests with exponential backoff (default: 3)"
+    )
+    parser.add_argument(
         "--schema-config",
         type=Path,
         default=Path("config/output_schema.toml"),
@@ -298,7 +314,9 @@ async def main():
         schema_config=args.schema_config,
         concurrency=args.concurrency,
         checkpoint_interval=args.checkpoint_interval,
-        max_versions=args.max_versions
+        max_versions=args.max_versions,
+        rate_limit_delay=args.rate_limit_delay,
+        max_retries=args.max_retries
     )
     stats = await orchestrator.run_update(incremental=incremental)
 

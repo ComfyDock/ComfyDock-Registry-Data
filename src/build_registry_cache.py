@@ -27,7 +27,9 @@ class RegistryCacheBuilder:
         node_timeout: int = 300,
         batch_timeout: int = 600,
         max_versions: int = -1,
-        nodes_per_page: int = 100
+        nodes_per_page: int = 100,
+        rate_limit_delay: float = 0.1,
+        max_retries: int = 3
     ):
         self.concurrency = concurrency
         self.checkpoint_interval = checkpoint_interval
@@ -35,6 +37,8 @@ class RegistryCacheBuilder:
         self.batch_timeout = batch_timeout
         self.max_versions = max_versions
         self.nodes_per_page = nodes_per_page
+        self.rate_limit_delay = rate_limit_delay
+        self.max_retries = max_retries
         self.nodes_processed = 0
         self.versions_processed = 0
         self.metadata_fetched = 0
@@ -74,7 +78,7 @@ class RegistryCacheBuilder:
             self._load_cache(input_cache)
             logger.info(f"Loaded {len(self.nodes_data)} nodes from existing cache")
 
-        async with RegistryClient(concurrency=self.concurrency) as client:
+        async with RegistryClient(concurrency=self.concurrency, max_retries=self.max_retries) as client:
             # Phase 1: Fetch basic node info
             if fetch_nodes:
                 await self._phase1_fetch_nodes(client, output_file, pages)
@@ -329,7 +333,7 @@ class RegistryCacheBuilder:
         try:
             # Get current versions from API with rate limiting delay
             api_versions = await client.get_node_versions(node_id)
-            await asyncio.sleep(0.1)  # Rate limit: 100ms delay between version requests
+            await asyncio.sleep(self.rate_limit_delay)  # Rate limit delay between version requests
 
             if not api_versions:
                 # No versions available

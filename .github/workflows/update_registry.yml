@@ -134,16 +134,20 @@ jobs:
               --data-dir ../data \
               --schema-config ../config/output_schema.toml \
               --force-full \
-              --concurrency 2 \
-              --checkpoint-interval 500
+              --concurrency 1 \
+              --checkpoint-interval 500 \
+              --rate-limit-delay 0.5 \
+              --max-retries 5
           else
             echo "⚡ Running INCREMENTAL update"
             uv run --no-sources python update_registry.py \
               --data-dir ../data \
               --schema-config ../config/output_schema.toml \
               --incremental \
-              --concurrency 2 \
-              --checkpoint-interval 500
+              --concurrency 1 \
+              --checkpoint-interval 500 \
+              --rate-limit-delay 0.5 \
+              --max-retries 5
           fi
 
       - name: Validate data integrity

@@ -14,10 +14,11 @@ logger = getLogger(__name__)
 class RegistryClient:
     """Async client for ComfyUI registry API."""
 
-    def __init__(self, base_url: str = "https://api.comfy.org", concurrency: int = 10):
+    def __init__(self, base_url: str = "https://api.comfy.org", concurrency: int = 10, max_retries: int = 3):
         self.base_url = base_url
         self.session = None
         self.concurrency = concurrency
+        self.max_retries = max_retries
         self.semaphore = asyncio.Semaphore(concurrency)
 
     async def __aenter__(self):
@@ -103,21 +104,20 @@ class RegistryClient:
     async def get_node_versions(self, node_id: str) -> List[Dict]:
         """Get all versions for a node with retry logic for rate limiting."""
         url = f"{self.base_url}/nodes/{node_id}/versions"
-        max_retries = 3
         base_delay = 2.0
 
-        for attempt in range(max_retries):
+        for attempt in range(self.max_retries):
             try:
                 async with self.session.get(url) as response:
                     if response.status == 429:
                         # Rate limited - wait with exponential backoff
-                        if attempt < max_retries - 1:
+                        if attempt < self.max_retries - 1:
                             delay = base_delay * (2 ** attempt)
-                            logger.debug(f"Rate limited for {node_id}, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                            logger.debug(f"Rate limited for {node_id}, retrying in {delay}s (attempt {attempt + 1}/{self.max_retries})")
                             await asyncio.sleep(delay)
                             continue
                         else:
-                            logger.warning(f"Rate limited for {node_id} after {max_retries} attempts, skipping")
+                            logger.warning(f"Rate limited for {node_id} after {self.max_retries} attempts, skipping")
                             return []
 
                     if response.status != 200:
@@ -136,12 +136,12 @@ class RegistryClient:
                     return active_versions
 
             except Exception as e:
-                if attempt < max_retries - 1:
+                if attempt < self.max_retries - 1:
                     delay = base_delay * (2 ** attempt)
                     logger.debug(f"Error fetching versions for {node_id}: {e}, retrying in {delay}s")
                     await asyncio.sleep(delay)
                 else:
-                    logger.warning(f"Error fetching versions for {node_id} after {max_retries} attempts: {e}")
+                    logger.warning(f"Error fetching versions for {node_id} after {self.max_retries} attempts: {e}")
                     return []
 
         return []

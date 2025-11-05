@@ -327,8 +327,9 @@ class RegistryCacheBuilder:
     async def _fetch_node_versions_incremental(self, client: RegistryClient, node_id: str):
         """Fetch versions and install info incrementally for a node."""
         try:
-            # Get current versions from API
+            # Get current versions from API with rate limiting delay
             api_versions = await client.get_node_versions(node_id)
+            await asyncio.sleep(0.1)  # Rate limit: 100ms delay between version requests
 
             if not api_versions:
                 # No versions available

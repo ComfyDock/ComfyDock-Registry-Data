@@ -133,13 +133,17 @@ jobs:
             uv run --no-sources python update_registry.py \
               --data-dir ../data \
               --schema-config ../config/output_schema.toml \
-              --force-full
+              --force-full \
+              --concurrency 2 \
+              --checkpoint-interval 500
           else
             echo "⚡ Running INCREMENTAL update"
             uv run --no-sources python update_registry.py \
               --data-dir ../data \
               --schema-config ../config/output_schema.toml \
-              --incremental
+              --incremental \
+              --concurrency 2 \
+              --checkpoint-interval 500
           fi
 
       - name: Validate data integrity

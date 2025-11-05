@@ -101,29 +101,50 @@ class RegistryClient:
             return None
 
     async def get_node_versions(self, node_id: str) -> List[Dict]:
-        """Get all versions for a node."""
+        """Get all versions for a node with retry logic for rate limiting."""
         url = f"{self.base_url}/nodes/{node_id}/versions"
+        max_retries = 3
+        base_delay = 2.0
 
-        try:
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    logger.debug(f"No versions for {node_id}: {response.status}")
+        for attempt in range(max_retries):
+            try:
+                async with self.session.get(url) as response:
+                    if response.status == 429:
+                        # Rate limited - wait with exponential backoff
+                        if attempt < max_retries - 1:
+                            delay = base_delay * (2 ** attempt)
+                            logger.debug(f"Rate limited for {node_id}, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logger.warning(f"Rate limited for {node_id} after {max_retries} attempts, skipping")
+                            return []
+
+                    if response.status != 200:
+                        logger.debug(f"No versions for {node_id}: {response.status}")
+                        return []
+
+                    versions = await response.json()
+                    if not isinstance(versions, list):
+                        logger.warning(f"Unexpected versions format for {node_id}")
+                        return []
+
+                    # Filter active versions and sort
+                    active_versions = [v for v in versions if not v.get("deprecated", False)]
+                    active_versions.sort(key=lambda v: v.get("version", ""))
+
+                    return active_versions
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.debug(f"Error fetching versions for {node_id}: {e}, retrying in {delay}s")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.warning(f"Error fetching versions for {node_id} after {max_retries} attempts: {e}")
                     return []
 
-                versions = await response.json()
-                if not isinstance(versions, list):
-                    logger.warning(f"Unexpected versions format for {node_id}")
-                    return []
-
-                # Filter active versions and sort
-                active_versions = [v for v in versions if not v.get("deprecated", False)]
-                active_versions.sort(key=lambda v: v.get("version", ""))
-
-                return active_versions
-
-        except Exception as e:
-            logger.warning(f"Error fetching versions for {node_id}: {e}")
-            return []
+        return []
 
     async def get_install_info(self, node_id: str, version: str) -> Optional[Dict]:
         """Get install info for specific version."""

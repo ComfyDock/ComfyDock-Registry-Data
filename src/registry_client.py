@@ -162,46 +162,85 @@ class RegistryClient:
             return None
 
     async def get_comfy_nodes(self, node_id: str, version: str) -> Optional[List[Dict]]:
-        """Get comfy-nodes metadata for a specific version with pagination."""
+        """Get comfy-nodes metadata for a specific version with pagination and retry logic.
+
+        Returns:
+            List[Dict]: Successfully fetched comfy-nodes (may be empty if none exist)
+            None: Failed to fetch (rate limited, timeout, error) - caller should not cache
+        """
         all_comfy_nodes = []
         page = 1
         total_pages = None
         max_pages = 100
+        base_delay = 2.0
 
         while page <= max_pages:
             url = f"{self.base_url}/nodes/{node_id}/versions/{version}/comfy-nodes"
             params = {"page": page}
 
-            try:
-                async with self.session.get(url, params=params) as response:
-                    if response.status != 200:
-                        if page == 1:
-                            logger.debug(f"No comfy-nodes for {node_id}@{version}")
-                        return all_comfy_nodes if all_comfy_nodes else None
+            # Retry logic for rate limiting
+            page_fetched = False
+            for attempt in range(self.max_retries):
+                try:
+                    async with self.session.get(url, params=params) as response:
+                        if response.status == 429:
+                            # Rate limited - retry with exponential backoff
+                            if attempt < self.max_retries - 1:
+                                delay = base_delay * (2 ** attempt)
+                                logger.debug(f"Rate limited fetching metadata for {node_id}@{version} page {page}, retrying in {delay}s (attempt {attempt + 1}/{self.max_retries})")
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                logger.warning(f"Rate limited for {node_id}@{version} page {page} after {self.max_retries} attempts")
+                                return None  # Return None to signal failure (don't cache)
 
-                    data = await response.json()
-                    comfy_nodes = data.get("comfy_nodes", [])
+                        if response.status == 404:
+                            # No metadata exists for this version (this is OK, cache it as empty)
+                            if page == 1:
+                                logger.debug(f"No comfy-nodes metadata exists for {node_id}@{version}")
+                            return []  # Empty list means "successfully fetched, but empty"
 
-                    if comfy_nodes:
-                        all_comfy_nodes.extend(comfy_nodes)
-                        logger.debug(f"Page {page}: Found {len(comfy_nodes)} comfy-nodes for {node_id}@{version}")
+                        if response.status != 200:
+                            # Other error - don't cache, allow retry later
+                            if page == 1:
+                                logger.debug(f"Error status {response.status} for {node_id}@{version}")
+                            return None
 
-                    if total_pages is None:
-                        total_pages = data.get("totalPages", data.get("totalNumberOfPages", 1))
-                        if total_pages > 1:
-                            logger.debug(f"Node {node_id}@{version} has {total_pages} pages of metadata")
+                        data = await response.json()
+                        comfy_nodes = data.get("comfy_nodes", [])
 
-                    if page >= total_pages or not comfy_nodes:
-                        break
+                        if comfy_nodes:
+                            all_comfy_nodes.extend(comfy_nodes)
+                            logger.debug(f"Page {page}: Found {len(comfy_nodes)} comfy-nodes for {node_id}@{version}")
 
-                    page += 1
-                    await asyncio.sleep(0.05)
+                        if total_pages is None:
+                            total_pages = data.get("totalPages", data.get("totalNumberOfPages", 1))
+                            if total_pages > 1:
+                                logger.debug(f"Node {node_id}@{version} has {total_pages} pages of metadata")
 
-            except Exception as e:
-                logger.debug(f"Error fetching comfy-nodes page {page} for {node_id}@{version}: {e}")
+                        page_fetched = True
+                        break  # Success, exit retry loop
+
+                except Exception as e:
+                    if attempt < self.max_retries - 1:
+                        delay = base_delay * (2 ** attempt)
+                        logger.debug(f"Error fetching comfy-nodes page {page} for {node_id}@{version}: {e}, retrying in {delay}s")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.warning(f"Error fetching comfy-nodes page {page} for {node_id}@{version} after {self.max_retries} attempts: {e}")
+                        return None  # Failed after retries
+
+            if not page_fetched:
+                return None  # Page fetch failed after all retries
+
+            # Check if we should fetch next page
+            if page >= (total_pages or 1) or not comfy_nodes:
                 break
 
-        if all_comfy_nodes:
-            logger.debug(f"Total: Found {len(all_comfy_nodes)} comfy-nodes across {page - 1} pages for {node_id}@{version}")
+            page += 1
+            await asyncio.sleep(0.05)
 
-        return all_comfy_nodes if all_comfy_nodes else None
+        if all_comfy_nodes:
+            logger.debug(f"Total: Found {len(all_comfy_nodes)} comfy-nodes across {page} pages for {node_id}@{version}")
+
+        return all_comfy_nodes  # Return list (may be empty if no nodes, but fetch was successful)

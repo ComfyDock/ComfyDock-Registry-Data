@@ -453,12 +453,19 @@ class RegistryCacheBuilder:
                 logger.debug(f"Fetching metadata for {node_id}@{version}")
                 comfy_nodes = await client.get_comfy_nodes(node_id, version)
 
-                if comfy_nodes:
+                if comfy_nodes is None:
+                    # Failed to fetch (rate limited, timeout, error)
+                    # Don't mark as cached so we can retry on next run
+                    logger.debug(f"Failed to fetch metadata for {node_id}@{version}, will retry on next run")
+                    continue
+                elif comfy_nodes:
+                    # Successfully fetched with data
                     version_info["comfy_nodes"] = comfy_nodes
                     version_info["metadata_cached"] = True
                     self.metadata_fetched += len(comfy_nodes)
                     metadata_fetched += 1
                 else:
+                    # Successfully fetched but empty (no metadata exists for this version)
                     version_info["comfy_nodes"] = []
                     version_info["metadata_cached"] = True
                     metadata_fetched += 1

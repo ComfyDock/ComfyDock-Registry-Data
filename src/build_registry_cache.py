@@ -26,10 +26,11 @@ class RegistryCacheBuilder:
         checkpoint_interval: int = 20,
         node_timeout: int = 300,
         batch_timeout: int = 600,
-        max_versions: int = -1,
+        max_versions: int = 1,
         nodes_per_page: int = 100,
         rate_limit_delay: float = 0.1,
-        max_retries: int = 3
+        max_retries: int = 3,
+        force_metadata_refresh: bool = False
     ):
         self.concurrency = concurrency
         self.checkpoint_interval = checkpoint_interval
@@ -39,6 +40,7 @@ class RegistryCacheBuilder:
         self.nodes_per_page = nodes_per_page
         self.rate_limit_delay = rate_limit_delay
         self.max_retries = max_retries
+        self.force_metadata_refresh = force_metadata_refresh
         self.nodes_processed = 0
         self.versions_processed = 0
         self.metadata_fetched = 0
@@ -86,6 +88,9 @@ class RegistryCacheBuilder:
             # Phase 2: Fetch versions and install info
             if fetch_versions:
                 await self._phase2_fetch_versions(client, output_file)
+                # Explicit checkpoint after version updates
+                self._save_cache(output_file)
+                logger.info("📦 Checkpoint: Version updates saved")
 
             # Phase 3: Fetch metadata
             if fetch_metadata:
@@ -148,6 +153,8 @@ class RegistryCacheBuilder:
                             # Process and cache immediately
                             for node in nodes:
                                 node_id = node["id"]
+                                api_latest = node.get("latest_version", {}).get("version") if isinstance(node.get("latest_version"), dict) else None
+
                                 if node_id not in self.nodes_data:
                                     # New node - initialize with basic info and timestamps
                                     self.nodes_data[node_id] = node
@@ -156,9 +163,33 @@ class RegistryCacheBuilder:
                                     self.nodes_data[node_id]["metadata_count"] = 0
                                     self.nodes_data[node_id]["first_seen"] = datetime.now().isoformat()
                                     self.nodes_data[node_id]["last_checked"] = datetime.now().isoformat()
+                                    self.nodes_data[node_id]["_needs_version_refresh"] = True
                                 else:
                                     # Update existing node with latest basic info
                                     existing = self.nodes_data[node_id]
+                                    cached_latest = existing.get("latest_version", {}).get("version") if isinstance(existing.get("latest_version"), dict) else None
+
+                                    # Check if latest version changed
+                                    if api_latest != cached_latest:
+                                        existing["_needs_version_refresh"] = True
+                                        logger.debug(f"{node_id}: latest version changed ({cached_latest} → {api_latest})")
+                                    else:
+                                        # Check if not checked in 24h (fallback for intermediate versions)
+                                        last_checked = existing.get("last_checked")
+                                        if last_checked:
+                                            try:
+                                                last_checked_dt = datetime.fromisoformat(last_checked)
+                                                hours_since_check = (datetime.now() - last_checked_dt).total_seconds() / 3600
+                                                if hours_since_check > 24:
+                                                    existing["_needs_version_refresh"] = True
+                                                    logger.debug(f"{node_id}: forcing check (last checked {hours_since_check:.1f}h ago)")
+                                                else:
+                                                    existing["_needs_version_refresh"] = False
+                                            except Exception:
+                                                existing["_needs_version_refresh"] = True
+                                        else:
+                                            existing["_needs_version_refresh"] = True
+
                                     existing.update({k: v for k, v in node.items()
                                                    if k not in ['versions_list', 'basic_cached',
                                                                'versions_cached', 'metadata_count', 'first_seen', 'last_checked']})
@@ -209,28 +240,21 @@ class RegistryCacheBuilder:
         logger.info("PHASE 2: Fetching versions and install data")
         logger.info("=" * 60)
 
-        # Process ALL nodes to check for new versions (incremental updates)
-        # Optimization: Skip nodes checked within the last hour
+        # Process nodes that need version refresh based on Phase 1 detection
         all_nodes = list(self.nodes_data.items())
         nodes_to_process = []
-        skipped_recent = 0
+        skipped_unchanged = 0
 
         for node_id, node in all_nodes:
-            last_checked = node.get("last_checked")
-            if last_checked:
-                try:
-                    last_checked_dt = datetime.fromisoformat(last_checked)
-                    hours_since_check = (datetime.now() - last_checked_dt).total_seconds() / 3600
-                    if hours_since_check < 1.0:  # Skip if checked within last hour
-                        skipped_recent += 1
-                        continue
-                except Exception:
-                    pass  # If timestamp parsing fails, process the node
+            # Check if version refresh is needed (set by Phase 1)
+            if not node.get("_needs_version_refresh", True):
+                skipped_unchanged += 1
+                continue
 
             nodes_to_process.append((node_id, node))
 
-        if skipped_recent > 0:
-            logger.info(f"Optimization: Skipped {skipped_recent} recently checked nodes")
+        if skipped_unchanged > 0:
+            logger.info(f"Optimization: Skipped {skipped_unchanged} nodes with unchanged latest version")
 
         if not nodes_to_process:
             logger.info("No nodes to process")
@@ -246,22 +270,22 @@ class RegistryCacheBuilder:
 
             logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} nodes)")
 
-            # Process batch concurrently
-            tasks = []
-            for node_id, _ in batch:
-                task = asyncio.create_task(
-                    self._fetch_node_versions_incremental(client, node_id)
-                )
-                tasks.append(task)
+            # Process batch in groups of `concurrency` to respect rate limits
+            for j in range(0, len(batch), self.concurrency):
+                group = batch[j:j+self.concurrency]
 
-            # Wait for batch
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=self.batch_timeout
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"Batch {batch_num} timed out")
+                tasks = [
+                    asyncio.create_task(self._fetch_node_versions_incremental(client, node_id))
+                    for node_id, _ in group
+                ]
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=self.batch_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"Batch {batch_num} group {j//self.concurrency + 1} timed out")
 
             # Checkpoint after each batch
             self._save_cache(output_file)
@@ -276,6 +300,9 @@ class RegistryCacheBuilder:
         if self.max_versions <= 0:
             logger.info("No metadata limit specified, fetching all")
 
+        if self.force_metadata_refresh:
+            logger.info("⚠️  METADATA OVERRIDE MODE: Will re-fetch all metadata even if cached")
+
         # Get nodes that need metadata for their LATEST versions
         nodes_needing_metadata = []
         for node_id, node in self.nodes_data.items():
@@ -287,11 +314,15 @@ class RegistryCacheBuilder:
             max_to_check = self.max_versions if self.max_versions > 0 else len(versions_list)
             top_versions = versions_list[:max_to_check]
 
-            # Count how many of the top N are missing metadata
-            missing_metadata_count = sum(1 for v in top_versions if not v.get("metadata_cached", False))
-
-            if missing_metadata_count > 0:
-                nodes_needing_metadata.append((node_id, node, missing_metadata_count))
+            # Check if we need to process this node
+            if self.force_metadata_refresh:
+                # Force refresh mode - process ALL nodes with versions
+                nodes_needing_metadata.append((node_id, node, len(top_versions)))
+            else:
+                # Normal mode - only process nodes with missing metadata
+                missing_metadata_count = sum(1 for v in top_versions if not v.get("metadata_cached", False))
+                if missing_metadata_count > 0:
+                    nodes_needing_metadata.append((node_id, node, missing_metadata_count))
 
         if not nodes_needing_metadata:
             logger.info("All nodes have sufficient metadata cached")
@@ -307,22 +338,22 @@ class RegistryCacheBuilder:
 
             logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} nodes)")
 
-            # Process batch concurrently
-            tasks = []
-            for node_id, node, _ in batch:  # versions_needed no longer used
-                task = asyncio.create_task(
-                    self._fetch_node_metadata(client, node_id)
-                )
-                tasks.append(task)
+            # Process batch in groups of `concurrency` to respect rate limits
+            for j in range(0, len(batch), self.concurrency):
+                group = batch[j:j+self.concurrency]
 
-            # Wait for batch
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=self.batch_timeout
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"Batch {batch_num} timed out")
+                tasks = [
+                    asyncio.create_task(self._fetch_node_metadata(client, node_id))
+                    for node_id, node, _ in group
+                ]
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=self.batch_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"Batch {batch_num} group {j//self.concurrency + 1} timed out")
 
             # Checkpoint after each batch
             self._save_cache(output_file)
@@ -443,9 +474,10 @@ class RegistryCacheBuilder:
             metadata_fetched = 0
 
             for version_info in top_versions:
-                # Skip if already has metadata
-                if version_info.get("metadata_cached", False):
-                    continue
+                # Skip if already has metadata (unless forcing refresh)
+                if not self.force_metadata_refresh:
+                    if version_info.get("metadata_cached", False):
+                        continue
 
                 version = version_info["version"]
 

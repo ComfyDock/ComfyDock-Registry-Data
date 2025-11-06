@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class RegistryOrchestrator:
     """Orchestrates incremental registry data updates."""
 
-    def __init__(self, data_dir: Path, schema_config: Path = None, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 10, rate_limit_delay: float = 0.1, max_retries: int = 3):
+    def __init__(self, data_dir: Path, schema_config: Path = None, concurrency: int = 8, checkpoint_interval: int = 25, max_versions: int = 1, rate_limit_delay: float = 0.1, max_retries: int = 3, force_metadata_refresh: bool = False):
         self.data_dir = data_dir
         self.cache_file = data_dir / "full_registry_cache.json"
         self.mappings_file = data_dir / "node_mappings.json"
@@ -38,6 +38,7 @@ class RegistryOrchestrator:
         self.max_versions = max_versions
         self.rate_limit_delay = rate_limit_delay
         self.max_retries = max_retries
+        self.force_metadata_refresh = force_metadata_refresh
         self.schema_config = schema_config
 
         # Ensure data directory exists
@@ -90,6 +91,7 @@ class RegistryOrchestrator:
             max_versions=self.max_versions,
             rate_limit_delay=self.rate_limit_delay,
             max_retries=self.max_retries,
+            force_metadata_refresh=self.force_metadata_refresh,
             nodes_per_page=200
         )
 
@@ -278,8 +280,13 @@ async def main():
     parser.add_argument(
         "--max-versions",
         type=int,
-        default=10,
-        help="Max versions to fetch metadata for (default: 10)"
+        default=1,
+        help="Max versions to fetch metadata for (default: 1)"
+    )
+    parser.add_argument(
+        "--metadata-override",
+        action="store_true",
+        help="Force refresh metadata even if already cached (recovery mode)"
     )
     parser.add_argument(
         "--rate-limit-delay",
@@ -316,7 +323,8 @@ async def main():
         checkpoint_interval=args.checkpoint_interval,
         max_versions=args.max_versions,
         rate_limit_delay=args.rate_limit_delay,
-        max_retries=args.max_retries
+        max_retries=args.max_retries,
+        force_metadata_refresh=args.metadata_override
     )
     stats = await orchestrator.run_update(incremental=incremental)
 

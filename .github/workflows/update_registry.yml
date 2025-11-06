@@ -15,6 +15,16 @@ on:
         required: false
         type: boolean
         default: false
+      metadata_override:
+        description: 'Force refresh all metadata (recovery mode)'
+        required: false
+        type: boolean
+        default: false
+      max_versions:
+        description: 'Number of versions to fetch metadata for'
+        required: false
+        type: number
+        default: 1
   schedule:
     - cron: '0 2 * * *'  # 2 AM UTC daily
 
@@ -125,29 +135,35 @@ jobs:
       - name: Run incremental registry update
         env:
           FORCE_REBUILD: ${{ github.event.inputs.force_full_rebuild || 'false' }}
+          METADATA_OVERRIDE: ${{ github.event.inputs.metadata_override || 'false' }}
+          MAX_VERSIONS: ${{ github.event.inputs.max_versions || '1' }}
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           cd src
+
+          # Build command with common parameters
+          # Balanced settings: 5 concurrent requests = ~5 req/s (well below 10-15 req/s limit)
+          # Estimated time: ~5 min for full metadata override, ~2 min for normal incremental
+          COMMON_ARGS="--data-dir ../data \
+            --schema-config ../config/output_schema.toml \
+            --concurrency 5 \
+            --checkpoint-interval 3000 \
+            --rate-limit-delay 0.1 \
+            --max-retries 3 \
+            --max-versions $MAX_VERSIONS"
+
+          # Add metadata override if enabled
+          if [ "$METADATA_OVERRIDE" = "true" ]; then
+            COMMON_ARGS="$COMMON_ARGS --metadata-override"
+            echo "⚠️  Metadata override enabled (force refresh)"
+          fi
+
           if [ "$FORCE_REBUILD" = "true" ]; then
             echo "🔄 Running FULL rebuild (forced)"
-            uv run --no-sources python update_registry.py \
-              --data-dir ../data \
-              --schema-config ../config/output_schema.toml \
-              --force-full \
-              --concurrency 1 \
-              --checkpoint-interval 500 \
-              --rate-limit-delay 0.5 \
-              --max-retries 5
+            uv run --no-sources python update_registry.py $COMMON_ARGS --force-full
           else
             echo "⚡ Running INCREMENTAL update"
-            uv run --no-sources python update_registry.py \
-              --data-dir ../data \
-              --schema-config ../config/output_schema.toml \
-              --incremental \
-              --concurrency 1 \
-              --checkpoint-interval 500 \
-              --rate-limit-delay 0.5 \
-              --max-retries 5
+            uv run --no-sources python update_registry.py $COMMON_ARGS --incremental
           fi
 
       - name: Validate data integrity
